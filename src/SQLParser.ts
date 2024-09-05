@@ -53,7 +53,7 @@ const keywords = new Set([
     "EXISTS",
 ]);
 
-class SqlTokenization {
+export class SQLParser {
     private tokens: Token[];
     private current: number;
 
@@ -65,21 +65,24 @@ class SqlTokenization {
     private tokenize(sql: string): Token[] {
         const tokens: Token[] = [];
         const re =
-            /\s*(=>|<=|>=|==|!=|[(),;*<>]|\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b|".*?"|'.*?'|\d+|\w+)\s*/gi;
+            /\s*(=>|<=|>=|==|!=|<>|>|<|=|[(),;*<>]|\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b|".*?"|'.*?'|\d+|\w+)\s*/gi;
         let match: RegExpExecArray | null;
 
         while ((match = re.exec(sql)) !== null) {
             const [value] = match;
-            const upperValue = value.toUpperCase();
+
+            const upperValue = value.toUpperCase().trim();
 
             if (keywords.has(upperValue)) {
                 tokens.push(new Token("KEYWORD", upperValue));
             } else if (/^\d+$/.test(value)) {
                 tokens.push(new Token("NUMBER", value));
-            } else if (/^['"].*['"]$/.test(value)) {
+            } else if (/^['"].*['"]$/.test(value.trim())) {
                 tokens.push(new Token("STRING", value));
-            } else if (/^[<>!=]=?$/.test(value) || value === ",") {
+            } else if (/^(<>|>=|<=|!=|<|>|=)/.test(value)) {
                 tokens.push(new Token("OPERATOR", value));
+            } else if (value.trim() === ",") {
+                tokens.push(new Token("COMMA", value));
             } else if (value === "(" || value === ")") {
                 tokens.push(new Token("PAREN", value));
             } else if (value === ";") {
@@ -88,6 +91,8 @@ class SqlTokenization {
                 tokens.push(new Token("IDENTIFIER", value));
             }
         }
+
+        console.log(tokens);
 
         return tokens;
     }
@@ -104,22 +109,25 @@ class SqlTokenization {
         return null;
     }
 
-    private parseIdentifier(): string {
+    private parseIdentifier(): string | null {
         const token = this.eat("IDENTIFIER");
         if (token) return token.value;
-        throw new Error("Expected identifier");
+        return null;
+        // throw new Error("Expected identifier");
     }
 
-    private parseNumber(): number {
+    private parseNumber(): number | null {
         const token = this.eat("NUMBER");
         if (token) return parseInt(token.value, 10);
-        throw new Error("Expected number");
+        return null;
     }
 
-    private parseString(): string {
+    private parseString(): string | null {
         const token = this.eat("STRING");
         if (token) return token.value.slice(1, -1); // Remove surrounding quotes
-        throw new Error("Expected string");
+
+        return null;
+        // throw new Error("Expected identifier");
     }
 
     private parseOperator(): string {
@@ -143,10 +151,11 @@ class SqlTokenization {
 
     private parseExpression(): any {
         // Simplified expression parsing
+        //console.log(this.parseIdentifier());
         const left = this.parseIdentifier();
         const operator = this.parseOperator();
         const right =
-            this.parseIdentifier() || this.parseString() || this.parseNumber();
+            this.parseIdentifier() ?? this.parseString() ?? this.parseNumber();
         return { left, operator, right };
     }
 
@@ -155,7 +164,7 @@ class SqlTokenization {
         this.eat("KEYWORD"); // Skip 'SELECT'
 
         while (this.currentToken().type === "IDENTIFIER") {
-            columns.push(this.parseIdentifier());
+            columns.push(this.parseIdentifier() as string);
             if (this.eat("COMMA")) continue;
             break;
         }
@@ -178,9 +187,9 @@ class SqlTokenization {
         this.eat("KEYWORD"); // Skip 'SET'
         const set: Record<string, any> = {};
         while (this.currentToken().type === "IDENTIFIER") {
-            const column = this.parseIdentifier();
+            const column = this.parseIdentifier() as string;
             this.eat("OPERATOR"); // Skip '='
-            const value = this.parseString() || this.parseNumber();
+            const value = this.parseString() ?? this.parseNumber();
             set[column] = value;
 
             if (this.eat("COMMA")) continue;
