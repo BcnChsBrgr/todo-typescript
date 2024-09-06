@@ -65,12 +65,12 @@ export class SQLParser {
     private tokenize(sql: string): Token[] {
         const tokens: Token[] = [];
         const re =
-            /\s*(=>|<=|>=|==|!=|<>|>|<|=|[(),;*<>]|\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b|".*?"|'.*?'|\d+|\w+)\s*/gi;
+            /\s*(?<operator>=|<=|>=|==|!=|<>|>|<|=|IN|[(),;*<>])|(?<keyword>\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b)|(?<doubleQuotedString>".*?")|(?<singleQuotedString>'.*?')|(?<number>\d+)|(?<identifier>\w+)\s*/gi;
+
         let match: RegExpExecArray | null;
 
         while ((match = re.exec(sql)) !== null) {
             const [value] = match;
-
             const upperValue = value.toUpperCase().trim();
 
             if (keywords.has(upperValue)) {
@@ -79,21 +79,19 @@ export class SQLParser {
                 tokens.push(new Token("NUMBER", value));
             } else if (/^['"].*['"]$/.test(value.trim())) {
                 tokens.push(new Token("STRING", value));
-            } else if (/^(<>|>=|<=|!=|<|>|=)/.test(value)) {
-                tokens.push(new Token("OPERATOR", value));
+            } else if (/^(<>|>=|<=|!=|<|>|=|IN)/i.test(value.trim())) {
+                tokens.push(new Token("OPERATOR", value.trim()));
             } else if (value.trim() === ",") {
                 tokens.push(new Token("COMMA", value));
-            } else if (value === "(" || value === ")") {
-                tokens.push(new Token("PAREN", value));
+            } else if (value.trim() === "(" || value.trim() === ")") {
+                tokens.push(new Token("PAREN", value.trim()));
             } else if (value === ";") {
                 tokens.push(new Token("SEMICOLON", value));
             } else {
                 tokens.push(new Token("IDENTIFIER", value));
             }
         }
-
         console.log(tokens);
-
         return tokens;
     }
 
@@ -154,8 +152,27 @@ export class SQLParser {
         //console.log(this.parseIdentifier());
         const left = this.parseIdentifier();
         const operator = this.parseOperator();
-        const right =
-            this.parseIdentifier() ?? this.parseString() ?? this.parseNumber();
+        let right: any;
+        if (operator.toUpperCase() === "IN") {
+            right = [];
+            this.eat("PAREN"); // eat '('
+
+            while (
+                ["IDENTIFIER", "STRING", "NUMBER"].includes(
+                    this.currentToken().type
+                )
+            ) {
+                right.push(this.currentToken().value);
+                if (this.eat("COMMA")) continue;
+                break;
+            }
+            this.eat("PAREN"); // eat ')'
+        } else {
+            right =
+                this.parseIdentifier() ??
+                this.parseString() ??
+                this.parseNumber();
+        }
         return { left, operator, right };
     }
 
