@@ -65,7 +65,7 @@ export class SQLParser {
     private tokenize(sql: string): Token[] {
         const tokens: Token[] = [];
         const re =
-            /\s*(?<operator>=|<=|>=|==|!=|<>|>|<|=|IN|[(),;*<>])|(?<keyword>\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b)|(?<doubleQuotedString>".*?")|(?<singleQuotedString>'.*?')|(?<number>\d+)|(?<identifier>\w+)\s*/gi;
+            /\s*(?<operator>=|<=|>=|==|!=|<>|>|<|=|IN|[*<>])|(?<semicolon>;)|(?<paren>[(|)])|(?<comma>,)|(?<keyword>\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b)|(?<doubleQuotedString>".*?")|(?<singleQuotedString>'.*?')|(?<number>\d+)|(?<identifier>\w+)\s*/gi;
 
         let match: RegExpExecArray | null;
 
@@ -73,25 +73,27 @@ export class SQLParser {
             const [value] = match;
             const upperValue = value.toUpperCase().trim();
 
-            if (keywords.has(upperValue)) {
-                tokens.push(new Token("KEYWORD", upperValue));
-            } else if (/^\d+$/.test(value)) {
-                tokens.push(new Token("NUMBER", value));
+            if (match?.groups?.keyword) {
+                tokens.push(
+                    new Token("KEYWORD", match.groups.keyword.toUpperCase())
+                );
+            } else if (match?.groups?.number) {
+                tokens.push(new Token("NUMBER", match?.groups?.number));
             } else if (/^['"].*['"]$/.test(value.trim())) {
                 tokens.push(new Token("STRING", value));
-            } else if (/^(<>|>=|<=|!=|<|>|=|IN)/i.test(value.trim())) {
-                tokens.push(new Token("OPERATOR", value.trim()));
-            } else if (value.trim() === ",") {
-                tokens.push(new Token("COMMA", value));
-            } else if (value.trim() === "(" || value.trim() === ")") {
-                tokens.push(new Token("PAREN", value.trim()));
-            } else if (value === ";") {
+            } else if (match?.groups?.operator) {
+                tokens.push(new Token("OPERATOR", value));
+            } else if (match?.groups?.comma) {
+                tokens.push(new Token("COMMA", match?.groups?.comma));
+            } else if (match?.groups?.paren) {
+                tokens.push(new Token("PAREN", value));
+            } else if (match?.groups?.semicolon) {
                 tokens.push(new Token("SEMICOLON", value));
             } else {
                 tokens.push(new Token("IDENTIFIER", value));
             }
         }
-        console.log(tokens);
+
         return tokens;
     }
 
@@ -155,8 +157,9 @@ export class SQLParser {
         let right: any;
         if (operator.toUpperCase() === "IN") {
             right = [];
-            this.eat("PAREN"); // eat '('
 
+            this.eat("PAREN"); // eat '('
+            let current = this.currentToken();
             while (
                 ["IDENTIFIER", "STRING", "NUMBER"].includes(
                     this.currentToken().type
