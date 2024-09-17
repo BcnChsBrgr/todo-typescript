@@ -193,8 +193,12 @@ export class SQLParser {
                         this.currentToken().type
                     )
                 ) {
-                    right.push(this.currentToken().value);
-                    if (this.eat("COMMA") && this.hasMoreToken()) continue;
+                    right.push(
+                        this.parseIdentifier() ??
+                            this.parseString() ??
+                            this.parseNumber()
+                    );
+                    if (this.hasMoreToken() && this.eat("COMMA")) continue;
                 }
                 this.eat("PAREN"); // eat ')'
             } else {
@@ -235,13 +239,11 @@ export class SQLParser {
             ) {
                 i++;
 
-                console.log(this.hasMoreToken());
                 where.push(this.parseExpression());
                 if (this.hasMoreToken() && this.eat("KEYWORD")) {
                     // eat 'and' or 'or'
                     continue;
                 }
-                console.log(i, where);
             }
         }
 
@@ -254,25 +256,34 @@ export class SQLParser {
 
         this.eat("KEYWORD"); // Skip 'SET'
         const set: Record<string, any> = {};
-        while (this.currentToken().type === "IDENTIFIER") {
+        while (
+            this.hasMoreToken() &&
+            this.currentToken().type === "IDENTIFIER"
+        ) {
             const column = this.parseIdentifier() as string;
             this.eat("OPERATOR"); // Skip '='
             const value = this.parseString() ?? this.parseNumber();
             set[column] = value;
 
-            if (this.eat("COMMA")) continue;
+            if (this.hasMoreToken() && this.eat("COMMA")) continue;
             break;
         }
 
-        let where: any = null;
+        let where: any = [];
 
-        if (this.eat("KEYWORD")?.value === "WHERE") {
-            where = [];
-            while (this.currentToken().type !== "KEYWORD") {
-                // where = this.parseExpression();
+        if (this.hasMoreToken() && this.eat("KEYWORD")?.value === "WHERE") {
+            while (
+                this.hasMoreToken() &&
+                this.currentToken().type !== "KEYWORD"
+            ) {
                 where.push(this.parseExpression());
-
-                this.eat("KEYWORD");
+                if (
+                    this.hasMoreToken() &&
+                    this.currentToken().type === "KEYWORD"
+                ) {
+                    this.eat("KEYWORD");
+                    continue;
+                }
             }
         }
 
