@@ -1,5 +1,6 @@
 type TokenType =
     | "KEYWORD"
+    | "SUBQUERY"
     | "IDENTIFIER"
     | "STRING"
     | "NUMBER"
@@ -54,43 +55,50 @@ const keywords = new Set([
 ]);
 
 export class SQLParser {
+    private sql: string;
     private tokens: Token[];
     private current: number;
 
     constructor(sql: string) {
-        this.tokens = this.tokenize(sql);
+        this.sql = sql;
+        this.tokens = this.tokenize(this.sql);
         this.current = 0;
+    }
+
+    private hasMoreToken(): boolean {
+        return this.current < this.tokens.length;
     }
 
     private tokenize(sql: string): Token[] {
         const tokens: Token[] = [];
         const re =
-            /\s*(?<operator>=|<=|>=|==|!=|<>|>|<|=|IN|[*<>])|(?<semicolon>;)|(?<paren>[(|)])|(?<comma>,)|(?<keyword>\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b)|(?<doubleQuotedString>".*?")|(?<singleQuotedString>'.*?')|(?<number>\d+)|(?<identifier>\w+)\s*/gi;
+            /\s*(?<operator>=|<=|>=|==|!=|<>|>|<|=|IN|[*<>])|(?<subquery>\(SELECT.*?FROM.*?\))|(?<semicolon>;)|(?<paren>[(|)])|(?<comma>,)|(?<keyword>\b(?:SELECT|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|SET|VALUES|INSERT|INTO|AND|OR|NOT|NULL|PRIMARY|KEY|VARCHAR|INT|CHAR|IF|EXISTS)\b)|(?<doubleQuotedString>".*?")|(?<singleQuotedString>'.*?')|(?<number>\d+)|(?<identifier>\w+)\s*/gi;
 
         let match: RegExpExecArray | null;
 
         while ((match = re.exec(sql)) !== null) {
             const [value] = match;
-            const upperValue = value.toUpperCase().trim();
 
             if (match?.groups?.keyword) {
                 tokens.push(
                     new Token("KEYWORD", match.groups.keyword.toUpperCase())
                 );
+            } else if (match?.groups?.subquery) {
+                tokens.push(new Token("SUBQUERY", match.groups.subquery));
             } else if (match?.groups?.number) {
                 tokens.push(new Token("NUMBER", match?.groups?.number));
             } else if (/^['"].*['"]$/.test(value.trim())) {
                 tokens.push(new Token("STRING", value));
             } else if (match?.groups?.operator) {
-                tokens.push(new Token("OPERATOR", value));
+                tokens.push(new Token("OPERATOR", match?.groups?.operator));
             } else if (match?.groups?.comma) {
                 tokens.push(new Token("COMMA", match?.groups?.comma));
             } else if (match?.groups?.paren) {
-                tokens.push(new Token("PAREN", value));
+                tokens.push(new Token("PAREN", match?.groups?.paren));
             } else if (match?.groups?.semicolon) {
-                tokens.push(new Token("SEMICOLON", value));
+                tokens.push(new Token("SEMICOLON", match?.groups?.semicolon));
             } else {
-                tokens.push(new Token("IDENTIFIER", value));
+                tokens.push(new Token("IDENTIFIER", value.trim()));
             }
         }
 
@@ -102,43 +110,57 @@ export class SQLParser {
     }
 
     private eat(type: TokenType): Token | null {
-        if (this.currentToken().getType() === type) {
-            return this.tokens[this.current++];
+        if (this.hasMoreToken()) {
+            if (this.currentToken()?.type === type) {
+                return this.tokens[this.current++];
+            }
         }
 
         return null;
     }
 
     private parseIdentifier(): string | null {
-        const token = this.eat("IDENTIFIER");
-        if (token) return token.value;
+        if (this.hasMoreToken()) {
+            const token = this.eat("IDENTIFIER");
+            if (token) return token.value;
+        }
+
         return null;
-        // throw new Error("Expected identifier");
     }
 
     private parseNumber(): number | null {
-        const token = this.eat("NUMBER");
-        if (token) return parseInt(token.value, 10);
+        if (this.hasMoreToken()) {
+            const token = this.eat("NUMBER");
+            if (token) return parseInt(token.value, 10);
+        }
+
         return null;
     }
 
     private parseString(): string | null {
-        const token = this.eat("STRING");
-        if (token) return token.value.slice(1, -1); // Remove surrounding quotes
+        if (this.hasMoreToken()) {
+            const token = this.eat("STRING");
+            if (token) return token.value.slice(1, -1); // Remove surrounding quotes
+        }
 
         return null;
         // throw new Error("Expected identifier");
     }
 
-    private parseOperator(): string {
-        const token = this.eat("OPERATOR");
-        if (token) return token.value;
-        throw new Error("Expected operator");
+    private parseOperator(): string | null {
+        if (this.hasMoreToken()) {
+            const token = this.eat("OPERATOR");
+            if (token) return token.value;
+        }
+        return null;
     }
 
     private parseParentheses(): string | null {
-        const token = this.eat("PAREN");
-        return token ? token.value : null;
+        if (this.hasMoreToken()) {
+            const token = this.eat("PAREN");
+            return token ? token.value : null;
+        }
+        return null;
     }
 
     private parseComma(): void {
@@ -151,32 +173,39 @@ export class SQLParser {
 
     private parseExpression(): any {
         // Simplified expression parsing
-        //console.log(this.parseIdentifier());
-        const left = this.parseIdentifier();
-        const operator = this.parseOperator();
-        let right: any;
-        if (operator.toUpperCase() === "IN") {
-            right = [];
+        const left = this.hasMoreToken() ? this.parseIdentifier() : null;
 
-            this.eat("PAREN"); // eat '('
-            let current = this.currentToken();
-            while (
-                ["IDENTIFIER", "STRING", "NUMBER"].includes(
-                    this.currentToken().type
-                )
-            ) {
-                right.push(this.currentToken().value);
-                if (this.eat("COMMA")) continue;
-                break;
+        const operator = this.hasMoreToken() ? this.parseOperator() : null;
+        let right: any;
+        if (operator != null) {
+            if (operator.toUpperCase() === "IN") {
+                right = [];
+
+                if (this.currentToken().type === "SUBQUERY") {
+                    let tmpSQLString: Token = this.eat("SUBQUERY") as Token;
+                    let _tmp = new SQLParser(tmpSQLString.value.slice(1, -1));
+                    right.push(_tmp.parse());
+                    return { left, operator, right };
+                }
+                this.eat("PAREN"); // eat '('
+                while (
+                    ["IDENTIFIER", "STRING", "NUMBER"].includes(
+                        this.currentToken().type
+                    )
+                ) {
+                    right.push(this.currentToken().value);
+                    if (this.eat("COMMA") && this.hasMoreToken()) continue;
+                }
+                this.eat("PAREN"); // eat ')'
+            } else {
+                right =
+                    this.parseIdentifier() ??
+                    this.parseString() ??
+                    this.parseNumber();
             }
-            this.eat("PAREN"); // eat ')'
-        } else {
-            right =
-                this.parseIdentifier() ??
-                this.parseString() ??
-                this.parseNumber();
+            return { left, operator, right };
         }
-        return { left, operator, right };
+        throw Error(`unexpected parse where near ` + this.sql);
     }
 
     private parseSelect(): any {
@@ -192,9 +221,28 @@ export class SQLParser {
         this.eat("KEYWORD"); // Skip 'FROM'
         const table = this.parseIdentifier();
 
-        let where: any = null;
-        if (this.eat("KEYWORD")?.value === "WHERE") {
-            where = this.parseExpression();
+        const where: any = [];
+
+        if (
+            this.hasMoreToken() &&
+            this.currentToken().value.toUpperCase() === "WHERE" &&
+            this.eat("KEYWORD") // eat 'where'
+        ) {
+            let i = 0;
+            while (
+                this.hasMoreToken() &&
+                this.currentToken().type !== "KEYWORD"
+            ) {
+                i++;
+
+                console.log(this.hasMoreToken());
+                where.push(this.parseExpression());
+                if (this.hasMoreToken() && this.eat("KEYWORD")) {
+                    // eat 'and' or 'or'
+                    continue;
+                }
+                console.log(i, where);
+            }
         }
 
         return { type: "SELECT", columns, table, where };
@@ -217,8 +265,15 @@ export class SQLParser {
         }
 
         let where: any = null;
+
         if (this.eat("KEYWORD")?.value === "WHERE") {
-            where = this.parseExpression();
+            where = [];
+            while (this.currentToken().type !== "KEYWORD") {
+                // where = this.parseExpression();
+                where.push(this.parseExpression());
+
+                this.eat("KEYWORD");
+            }
         }
 
         return { type: "UPDATE", table, set, where };
