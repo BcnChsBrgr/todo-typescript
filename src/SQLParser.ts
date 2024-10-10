@@ -193,11 +193,14 @@ export class SQLParser {
                         this.currentToken().type
                     )
                 ) {
-                    right.push(
+                    let valuesToCheck =
                         this.parseIdentifier() ??
-                            this.parseString() ??
-                            this.parseNumber()
-                    );
+                        this.parseString() ??
+                        this.parseNumber();
+
+                    if (!right.includes(valuesToCheck)) {
+                        right.push(valuesToCheck);
+                    }
                     if (this.hasMoreToken() && this.eat("COMMA")) continue;
                 }
                 this.eat("PAREN"); // eat ')'
@@ -225,8 +228,10 @@ export class SQLParser {
         this.eat("KEYWORD"); // Skip 'FROM'
         const table = this.parseIdentifier();
 
-        const where: any = [];
-
+        const where: any[] = [];
+        const tmp: any[] = [];
+        const and: any[] = [];
+        const or: any[] = [];
         if (
             this.hasMoreToken() &&
             this.currentToken().value.toUpperCase() === "WHERE" &&
@@ -239,11 +244,29 @@ export class SQLParser {
             ) {
                 i++;
 
-                where.push(this.parseExpression());
-                if (this.hasMoreToken() && this.eat("KEYWORD")) {
+                tmp.push(this.parseExpression());
+                if (
+                    this.hasMoreToken() &&
+                    this.eat("KEYWORD")?.value.toLowerCase() === "or"
+                ) {
                     // eat 'and' or 'or'
+                    or.push(tmp.shift());
                     continue;
+                } else {
+                    and.push(tmp.shift());
                 }
+            }
+            if (and.length > 0) {
+                where.push({
+                    operator: "and",
+                    condition: and,
+                });
+            }
+            if (or.length > 0) {
+                where.push({
+                    operator: "or",
+                    condition: or,
+                });
             }
         }
 
