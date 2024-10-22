@@ -14,6 +14,20 @@ interface Token {
     value: string;
 }
 
+interface BasicWhere {
+    left: string;
+    operator: string;
+    right: string[] | number[] | string | number | ParseInterface[] | null;
+}
+
+interface ParseInterface {
+    type: "SELECT" | "UPDATE" | "DELETE" | "CREATE_TABLE";
+    columns?: string | string[];
+    table: string | null;
+    set?: Record<string, any>;
+    where?: BasicWhere[];
+}
+
 class Token implements Token {
     constructor(type: TokenType, value: string) {
         this.type = type;
@@ -142,9 +156,7 @@ export class SQLParser {
             const token = this.eat("STRING");
             if (token) return token.value.slice(1, -1); // Remove surrounding quotes
         }
-
         return null;
-        // throw new Error("Expected identifier");
     }
 
     private parseOperator(): string | null {
@@ -171,21 +183,89 @@ export class SQLParser {
         this.eat("SEMICOLON");
     }
 
-    private parseExpression(): any {
+    private parseWhere(): any {
+        const where: any[] = [];
+        const tmp: any[] = [];
+        const and: any[] = [];
+        const or: any[] = [];
+
+        if (
+            this.hasMoreToken() &&
+            this.currentToken().value.toUpperCase() === "WHERE" &&
+            this.eat("KEYWORD") // eat 'WHERE'
+        ) {
+            let i = 0;
+            while (
+                this.hasMoreToken() &&
+                this.currentToken().type !== "KEYWORD"
+            ) {
+                tmp.push(this.parseExpression());
+                if (
+                    this.hasMoreToken() &&
+                    this.eat("KEYWORD")?.value.toUpperCase() === "OR"
+                ) {
+                    or.push(tmp.shift());
+                } else {
+                    and.push(tmp.shift());
+                }
+            }
+            if (and.length > 0) {
+                where.push({
+                    operator: "and",
+                    condition: and,
+                });
+            }
+            if (or.length > 0) {
+                where.push({
+                    operator: "or",
+                    condition: or,
+                });
+            }
+        }
+        const left = this.hasMoreToken() ? this.parseIdentifier() : null;
+
+        const operator = this.hasMoreToken() ? this.parseOperator() : null;
+
+        let right: any;
+
+        if (operator !== null) {
+            if (operator.toUpperCase() !== "IN") {
+                right =
+                    this.parseIdentifier() ??
+                    this.parseString() ??
+                    this.parseNumber();
+            } else {
+            }
+            return { left, operator, right };
+        }
+
+        throw new Error(
+            `Unexpected Parse were near ` + this.tokens[--this.current]
+        );
+    }
+
+    private parseExpression(): BasicWhere {
         // Simplified expression parsing
         const left = this.hasMoreToken() ? this.parseIdentifier() : null;
 
         const operator = this.hasMoreToken() ? this.parseOperator() : null;
-        let right: any;
+
+        if (left === null || operator === null) {
+            throw new Error("Expected identifier");
+        }
+        let tmp: any;
+
         if (operator != null) {
             if (operator.toUpperCase() === "IN") {
-                right = [];
+                tmp = [];
 
                 if (this.currentToken().type === "SUBQUERY") {
                     let tmpSQLString: Token = this.eat("SUBQUERY") as Token;
-                    let _tmp = new SQLParser(tmpSQLString.value.slice(1, -1));
-                    right.push(_tmp.parse());
-                    return { left, operator, right };
+                    let _tmp: SQLParser = new SQLParser(
+                        tmpSQLString.value.slice(1, -1)
+                    );
+                    tmp.push(_tmp.parse());
+                    return { left, operator, right: tmp };
                 }
                 this.eat("PAREN"); // eat '('
                 while (
@@ -193,29 +273,29 @@ export class SQLParser {
                         this.currentToken().type
                     )
                 ) {
-                    let valuesToCheck =
+                    let valuesToCheck: string | number | null =
                         this.parseIdentifier() ??
                         this.parseString() ??
                         this.parseNumber();
 
-                    if (!right.includes(valuesToCheck)) {
-                        right.push(valuesToCheck);
+                    if (!tmp.includes(valuesToCheck)) {
+                        tmp.push(valuesToCheck);
                     }
                     if (this.hasMoreToken() && this.eat("COMMA")) continue;
                 }
                 this.eat("PAREN"); // eat ')'
             } else {
-                right =
+                tmp =
                     this.parseIdentifier() ??
                     this.parseString() ??
                     this.parseNumber();
             }
-            return { left, operator, right };
+            return { left, operator, right: tmp };
         }
-        throw Error(`unexpected parse where near ` + this.sql);
+        throw new Error(`unexpected parse where near ` + this.sql);
     }
 
-    private parseSelect(): any {
+    private parseSelect(): ParseInterface {
         const columns: string[] = [];
         this.eat("KEYWORD"); // Skip 'SELECT'
 
@@ -273,7 +353,7 @@ export class SQLParser {
         return { type: "SELECT", columns, table, where };
     }
 
-    private parseUpdate(): any {
+    private parseUpdate(): ParseInterface {
         this.eat("KEYWORD"); // Skip 'UPDATE'
         const table = this.parseIdentifier();
 
@@ -313,7 +393,7 @@ export class SQLParser {
         return { type: "UPDATE", table, set, where };
     }
 
-    private parseDelete(): any {
+    private parseDelete(): ParseInterface {
         this.eat("KEYWORD"); // Skip 'DELETE'
         this.eat("KEYWORD"); // Skip 'FROM'
         const table = this.parseIdentifier();
@@ -326,10 +406,10 @@ export class SQLParser {
         return { type: "DELETE", table, where };
     }
 
-    private parseCreateTable(): any {
+    private parseCreateTable(): ParseInterface {
         this.eat("KEYWORD"); // Skip 'CREATE'
         this.eat("KEYWORD"); // Skip 'TABLE'
-        const tableName = this.parseIdentifier();
+        const table = this.parseIdentifier();
 
         const columns: any[] = [];
         this.eat("PAREN"); // Skip '('
@@ -343,28 +423,32 @@ export class SQLParser {
         }
         this.eat("PAREN"); // Skip ')'
 
-        return { type: "CREATE_TABLE", tableName, columns };
+        return { type: "CREATE_TABLE", table, columns };
     }
 
-    public parse(): any {
-        const token = this.currentToken();
-        if (token.type === "KEYWORD") {
-            switch (token.value) {
+    public parse(): ParseInterface {
+        if (
+            this.currentToken().type === "KEYWORD" &&
+            ["SELECT", "UPDATE", "DELETE", "CREATE"].includes(
+                this.currentToken().value.toUpperCase()
+            )
+        ) {
+            switch (this.currentToken().getValue().toUpperCase()) {
                 case "SELECT":
                     return this.parseSelect();
+                    break;
                 case "UPDATE":
                     return this.parseUpdate();
+                    break;
                 case "DELETE":
                     return this.parseDelete();
-                case "CREATE":
-                    if (this.tokens[this.current + 1].value === "TABLE") {
-                        return this.parseCreateTable();
-                    }
                     break;
-                default:
-                    throw new Error(`Unexpected keyword: ${token.value}`);
+                case "CREATE":
+                    this.eat("KEYWORD"); //eat keyword 'table'
+                    return this.parseCreateTable();
+                    break;
             }
         }
-        throw new Error(`Unexpected token: ${token.value}`);
+        throw new Error(`Unexpected token: ${this.currentToken().value}`);
     }
 }
